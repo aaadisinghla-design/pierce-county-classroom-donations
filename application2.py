@@ -4,7 +4,7 @@ import uuid
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="Pierce County Direct Vendor Donation Hub",
+    page_title="Chalk Fund",
     layout="wide"
 )
 
