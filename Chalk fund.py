@@ -4,7 +4,7 @@ import uuid
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="Chalk Fund",
+    page_title="Chalk Fund - Pierce County Direct Vendor Donation Hub",
     layout="wide"
 )
 
@@ -84,7 +84,7 @@ def update_cart_status_in_db(uid, status_val):
 
 
 # 3. App Title Header Banners
-st.title("🏛️ Chalk Fund")
+st.title("🏛️ Chalk Fund: Pierce County Donation Hub")
 st.caption("Teachers prep carts • Donors fund them directly • Vendors ship securely to the school warehouse")
 st.markdown("---")
 
@@ -158,45 +158,3 @@ if role == "Donor View":
                         st.success("Thank you for your incredible generosity! The database has updated.")
                         st.rerun()
                 st.markdown("---")
-                # 6. TEACHER MANAGEMENT MODULE
-if role == "Teacher Management":
-    st.header("✏️ Create Direct Vendor Request")
-    st.markdown("Paste your shared cart or wishlist link from **Amazon, Walmart, Target, Scholastic, or any other store**.")
-    
-    with st.form("teacher_cart_form", clear_on_submit=True):
-        t_name = st.text_input("Your Name & Grade (e.g., Ms. Smith - Grade 2)")
-        vendor_name = st.selectbox("Select Vendor Store", ["Amazon Business", "Walmart Business", "Target Registry", "Lakeshore Learning", "Scholastic"])
-        cart_summary = st.text_area("List of items in this cart")
-        cost = st.number_input("Total Cart Value (\$)", min_value=1.00, step=0.01)
-        cart_link = st.text_input("Shared Cart / Wishlist Link URL (Paste any retail link here)")
-        
-        if st.form_submit_button("Publish Cart for Donors"):
-            if not t_name or not cart_summary or not cart_link or cost <= 0:
-                st.error("Please fill out all cart parameters.")
-            else:
-                if not cart_link.startswith(("http://", "https://")):
-                    cart_link = "https://" + cart_link
-                
-                add_cart_to_db(str(uuid.uuid4()), selected_district, selected_school, t_name, vendor_name, cart_summary, cost, cart_link)
-                st.success("Your cart has been permanently saved to the database! Switch to 'Donor View' to check it out.")
-
-    # --- NEW FEATURE: TEACHER RESET CONSOLE ---
-    st.markdown("---")
-    st.subheader("🛠️ Teacher Registry Administration")
-    st.caption("Review your live campus requests. If a donor accidentally marked an item as paid, click 'Reset to Pending' below.")
-    
-    all_carts = get_all_carts()
-    school_carts = [c for c in all_carts if c["district"] == selected_district and c["school"] == selected_school]
-    
-    if school_carts:
-        for item in school_carts:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.write(f"**{item['teacher']}** — {item['vendor']} Cart (\${item['total_cost']:.2f}) | Status: `{item['status']}`")
-            with col2:
-                # If it was accidentally marked paid, this resets it back to pending in the SQLite file!
-                if st.button("🔄 Reset to Pending", key=f"reset_{item['id']}"):
-                    update_cart_status_in_db(item['id'], "Pending")
-                    st.success("Status reset successfully!")
-                    st.rerun()
-   
