@@ -84,7 +84,7 @@ def update_cart_status_in_db(uid, status_val):
 
 
 # 3. App Title Header Banners
-st.title("🏛️ Pierce County Direct Vendor Donation Hub")
+st.title("🏛️ Chalk Fund")
 st.caption("Teachers prep carts • Donors fund them directly • Vendors ship securely to the school warehouse")
 st.markdown("---")
 
