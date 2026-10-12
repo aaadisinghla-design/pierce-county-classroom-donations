@@ -199,5 +199,4 @@ if role == "Teacher Management":
                     update_cart_status_in_db(item['id'], "Pending")
                     st.success("Status reset successfully!")
                     st.rerun()
-    else:
-        st.info("No items listed on this campus to manage.")
+ 
