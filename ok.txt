@@ -1,0 +1,96 @@
+import os
+import sqlite3
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+import pandas as pd
+import streamlit as st
+import stripe
+
+# ---------------- Configuration ----------------
+st.set_page_config(
+    page_title="Pierce County Classroom Donations",
+    page_icon="📚",
+    layout="wide",
+)
+
+DB_FILE = os.getenv("DB_FILE", "classroom_donations.db")
+APP_URL = os.getenv("APP_URL", "http://localhost:8501").rstrip("/")
+
+# Prefer Streamlit secrets; fall back to environment variables.
+try:
+    STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", "")
+except Exception:
+    STRIPE_SECRET_KEY = ""
+
+STRIPE_SECRET_KEY = STRIPE_SECRET_KEY or os.getenv("STRIPE_SECRET_KEY", "")
+stripe.api_key = STRIPE_SECRET_KEY
+
+
+# ---------------- Database ----------------
+def get_conn():
+    conn = sqlite3.connect(DB_FILE, timeout=15)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db():
+    with get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                teacher_name TEXT NOT NULL,
+                school_name TEXT NOT NULL,
+                district TEXT NOT NULL,
+                title TEXT NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT,
+                goal_amount REAL NOT NULL CHECK (goal_amount > 0),
+                raised_amount REAL NOT NULL DEFAULT 0.0 CHECK (raised_amount >= 0),
+                created_at TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS donations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                donor_name TEXT,
+                amount REAL NOT NULL CHECK (amount > 0),
+                message TEXT,
+                stripe_session_id TEXT UNIQUE NOT NULL,
+                donated_at TEXT,
+                FOREIGN KEY (request_id) REFERENCES requests(id)
+            )
+        """)
+        count = conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+        if count == 0:
+            today = datetime.now().strftime("%Y-%m-%d")
+            samples = [
+                ("Ms. Alvarez", "Lakeridge Middle School", "Sumner-Bonney Lake",
+                 "STEM Robotics & Sensor Kits", "STEM & Tech",
+                 "Programmable microcontrollers and ultrasonic sensors for 8th-grade engineering.",
+                 450.0, 180.0, today),
+                ("Mr. Jenkins", "Bonney Lake High School", "Sumner-Bonney Lake",
+                 "AP Physics Lab Equipment", "Science",
+                 "Digital force sensors and dynamics carts for mechanics labs.",
+                 600.0, 425.0, today),
+                ("Mrs. Chen", "Emerald Ridge High School", "Puyallup",
+                 "Classroom Library & Novels", "Books & Literacy",
+                 "Diverse contemporary fiction and non-fiction sets for 10th-grade English.",
+                 300.0, 90.0, today),
+            ]
+            conn.executemany("""
+                INSERT INTO requests
+                (teacher_name, school_name, district, title, category,
+                 description, goal_amount, raised_amount, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, samples)
+
+
+init_db()
+
+
+# ---------------- Stripe return verification ----------------
+def verify_returned_payment(session_id):
+    """Record a paid checkout session once, and update its project total atomically."""
