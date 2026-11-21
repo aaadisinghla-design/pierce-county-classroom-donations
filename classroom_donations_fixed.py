@@ -1,3 +1,87 @@
+from datetime import datetime
+import os
+import sqlite3
+
+import pandas as pd
+import streamlit as st
+import stripe
+
+st.set_page_config(page_title="Pierce County Classroom Donations", page_icon="📚", layout="wide")
+
+DB_PATH = os.getenv("DB_PATH", "classroom_donations.db")
+APP_URL = os.getenv("APP_URL", "http://localhost:8501").rstrip("/")
+STRIPE_SECRET_KEY = (
+    st.secrets.get("STRIPE_SECRET_KEY")
+    if "STRIPE_SECRET_KEY" in st.secrets
+    else os.getenv("STRIPE_SECRET_KEY", "")
+)
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
+
+DISTRICTS = [
+    "Tacoma Public Schools",
+    "Puyallup School District",
+    "Bethel School District",
+    "Clover Park School District",
+    "Peninsula School District",
+    "Sumner-Bonney Lake School District",
+]
+
+CATEGORIES = [
+    "STEM & Robotics",
+    "Books & Literacy",
+    "Art & Music",
+    "Classroom Supplies",
+    "Special Education",
+]
+
+
+def get_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher_name TEXT NOT NULL,
+            school_name TEXT NOT NULL,
+            district TEXT NOT NULL,
+            title TEXT NOT NULL,
+            category TEXT NOT NULL,
+            description TEXT,
+            goal_amount REAL NOT NULL,
+            raised_amount REAL NOT NULL DEFAULT 0.0,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def create_checkout(request_row: dict, donor: str, amount: float, message: str):
+    if not STRIPE_SECRET_KEY:
+        raise RuntimeError("STRIPE_SECRET_KEY is not configured.")
+    if amount < 5.0:
+        raise ValueError("Donation amount must be at least $5.00.")
+
+    amount_cents = int(round(float(amount) * 100))
+    checkout_session = stripe.checkout.Session.create(
+        mode="payment",
+        payment_method_types=["card"],
+        line_items=[
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": f"Donation: {request_row['title']}",
+                        "description": f"{request_row['teacher_name']} — {request_row['school_name']}",
+                    },
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }
+        ],
+        metadata={
             "request_id": str(request_row["id"]),
             "donor_name": (donor.strip() or "Anonymous")[:200],
             "message": message.strip()[:500],
@@ -45,6 +129,9 @@ if page == "Browse Classrooms":
     else:
         for _, row in df.iterrows():
             request_row = row.to_dict()
+            req_id = request_row["id"]
+            checkout_key = f"checkout_url_{req_id}"
+
             with st.container(border=True):
                 c1, c2 = st.columns(2)
                 with c1:
@@ -64,29 +151,37 @@ if page == "Browse Classrooms":
 
                 with c2:
                     donor = st.text_input(
-                        "Your Name", placeholder="Anonymous", key=f"name_{row['id']}"
+                        "Your Name", placeholder="Anonymous", key=f"name_{req_id}"
                     )
                     amt = st.number_input(
-                        "Amount ($)", min_value=5.0, value=25.0, step=5.0,
-                        key=f"amt_{row['id']}"
+                        "Amount ($)",
+                        min_value=5.0,
+                        value=25.0,
+                        step=5.0,
+                        key=f"amt_{req_id}",
                     )
                     msg = st.text_input(
-                        "Note to Teacher", placeholder="Great project!",
-                        key=f"msg_{row['id']}"
+                        "Note to Teacher", placeholder="Great project!", key=f"msg_{req_id}"
                     )
 
                     if st.button(
-                        "Proceed to Checkout", key=f"btn_{row['id']}",
-                        use_container_width=True
+                        "Proceed to Checkout",
+                        key=f"btn_{req_id}",
+                        use_container_width=True,
                     ):
                         try:
                             session = create_checkout(request_row, donor, amt, msg)
-                            st.link_button(
-                                "💳 Pay Now on Stripe", session.url,
-                                type="primary", use_container_width=True
-                            )
+                            st.session_state[checkout_key] = session.url
                         except (stripe.StripeError, ValueError, RuntimeError) as exc:
                             st.error(f"Checkout error: {exc}")
+
+                    if st.session_state.get(checkout_key):
+                        st.link_button(
+                            "💳 Pay Now on Stripe",
+                            st.session_state[checkout_key],
+                            type="primary",
+                            use_container_width=True,
+                        )
 
 elif page == "Teacher Request Portal":
     st.title("✏️ Submit a Classroom Supply Request")
@@ -108,15 +203,24 @@ elif page == "Teacher Request Portal":
         else:
             try:
                 with get_conn() as conn:
-                    conn.execute("""
+                    conn.execute(
+                        """
                         INSERT INTO requests
                         (teacher_name, school_name, district, title, category,
                          description, goal_amount, raised_amount, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?)
-                    """, (
-                        t_name.strip(), s_name.strip(), dist, p_title.strip(), cat,
-                        desc.strip(), float(goal), datetime.now().strftime("%Y-%m-%d")
-                    ))
+                        """,
+                        (
+                            t_name.strip(),
+                            s_name.strip(),
+                            dist,
+                            p_title.strip(),
+                            cat,
+                            desc.strip(),
+                            float(goal),
+                            datetime.now().strftime("%Y-%m-%d"),
+                        ),
+                    )
                 st.success("Your classroom request has been published!")
             except sqlite3.Error as exc:
                 st.error(f"Database error while publishing: {exc}")
